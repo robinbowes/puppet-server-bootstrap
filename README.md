@@ -6,7 +6,9 @@ Shell script to bootstrap puppet server on a minimal Red Hat/CentOS/Fedora insta
 
 1. Do a minimal install of your preferred OS (see supported flavours below)
 2. Grab the psb script and run it:
+
 ```
+curl -L https://raw.github.com/robinbowes/puppet-server-bootstrap/master/psb -o psb
 bash psb
 ```
 
