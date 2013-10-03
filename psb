@@ -1,0 +1,137 @@
+#!/bin/bash
+#
+# Bootstrap a puppet master install on Redhat-flavour distros
+# Assumes nothing more than a minimal OS install
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# Copyright © 2013 Robin Bowes <robin.bowes@yo61.com>
+#
+
+PUPPETLABS_REPO_BASE=http://yum.puppetlabs.com
+REDHAT_RELEASE=/etc/redhat-release
+EPEL_REPO_BASE=http://dl.fedoraproject.org/pub/epel
+TEMP_DIR=${TEMP:-/tmp}
+MODULE_DIR="${TEMP_DIR}/modules"
+
+# hash defining the release RPM release for each of the OS combinations we know about
+declare -A PUPPETLABS_RELEASE=(
+  ["fedora/f17"]="7"
+  ["fedora/f18"]="7"
+  ["fedora/f19"]="2"
+  ["el/5"]="7"
+  ["el/6"]="7"
+)
+declare -A EPEL_RELEASE=(
+  ["el/5"]="4"
+  ["el/6"]="8"
+)
+
+function error() {
+  echo "ERROR: $1"
+  exit $2
+}
+
+function download(){
+  if ! curl --fail --location --silent "$1" -o "$2"; then
+    error "Error downloading $1" 101
+  fi
+}
+
+function rpm_installed () {
+  rpm -q --quiet $1
+}
+
+# First, make sure we are on a RH-flavour OS and get the family name and major version
+if [[ -f $REDHAT_RELEASE ]] ; then
+  OS_FAMILY=$(awk '{print $1}' $REDHAT_RELEASE)
+  OS_VERSION=$(awk '{print $3}' $REDHAT_RELEASE)
+  OS_MAJOR_VERSION=${OS_VERSION%%.*}
+else
+  error "$REDHAT_RELEASE not found" 101
+fi
+
+# The URL for the release RPM is different for Fedora vs RHEL/CentOS
+# Special case for Fedora, otherwise treat everything else the same
+if [[ ${OS_FAMILY} == "Fedora" ]] ; then
+  URL_FAMILY="fedora/f"
+else
+  URL_FAMILY="el/"
+fi
+
+# Make sure we know what the release RPM release number is for this os/version
+FAMILY_VERSION="${URL_FAMILY}${OS_MAJOR_VERSION}"
+PUPPETLABS_RPM_RELEASE="${PUPPETLABS_RELEASE["$FAMILY_VERSION"]}"
+if [[ -z $PUPPETLABS_RPM_RELEASE ]] ; then
+  error "puppetlabs release rpm not known for $FAMILY_VERSION" 101
+fi
+
+# retrieve the release RPM and install it
+PUPPETLABS_RELEASE_NAME="puppetlabs-release-${OS_MAJOR_VERSION}-${PUPPETLABS_RPM_RELEASE}"
+PUPPETLABS_RELEASE_RPM="${PUPPETLABS_RELEASE_NAME}.noarch.rpm"
+if rpm_installed "${PUPPETLABS_RELEASE_NAME}" ; then
+  echo "${PUPPETLABS_RELEASE_NAME} installed"
+else
+  PUPPETLABS_REPO_URL="${PUPPETLABS_REPO_BASE}/${FAMILY_VERSION}/products/i386/${PUPPETLABS_RELEASE_RPM}"
+  download "${PUPPETLABS_REPO_URL}" "${TEMP_DIR}/$PUPPETLABS_RELEASE_RPM"
+  yum localinstall "${TEMP_DIR}/$PUPPETLABS_RELEASE_RPM"
+fi
+
+# Now, let's do EPEL on non-Fedora platforms
+if [[ ${OS_FAMILY} != "Fedora" ]] ; then
+  EPEL_RPM_RELEASE="${EPEL_RELEASE["$FAMILY_VERSION"]}"
+  if [[ -z $PUPPETLABS_RPM_RELEASE ]] ; then
+    error "epel release rpm not known for $FAMILY_VERSION" 101
+  fi
+  EPEL_RELEASE_NAME="epel-release-${OS_MAJOR_VERSION}-${EPEL_RPM_RELEASE}"
+  EPEL_RELEASE_RPM="${EPEL_RELEASE_NAME}.noarch.rpm"
+  if rpm_installed "${EPEL_RELEASE_NAME}" ; then
+    echo "${EPEL_RELEASE_NAME} installed"
+  else
+    EPEL_REPO_URL="${EPEL_REPO_BASE}/${OS_MAJOR_VERSION}/i386/${EPEL_RELEASE_RPM}"
+    download "${EPEL_REPO_URL}" "${TEMP_DIR}/$EPEL_RELEASE_RPM"
+    yum -y localinstall "${TEMP_DIR}/$EPEL_RELEASE_RPM"
+  fi
+fi
+
+# install puppet, so we can use it to bootstrap the master
+if rpm_installed puppet ; then
+  echo "puppet installed"
+else
+  yum -y install puppet
+fi
+
+# create the temp module dir - this may already exist
+mkdir -p "${MODULE_DIR}"
+# make sure the puppet module is not present
+rm -rf "${MODULE_DIR}/puppet"
+
+# Now, checkout some modules to install the puppet master
+puppet module install stephenrjohnson/puppet --modulepath="${MODULE_DIR}"
+# At time of writing, puppetlabs/puppetdb uses a deprecated version of inifile.
+# Remove it, and install the correct one.
+# this will not be necessary when stephenrjohnson/puppet is updated
+rm -rf "${MODULE_DIR}/inifile"
+puppet module install puppetlabs/inifile --modulepath="${MODULE_DIR}"
+
+# Grab the latest github version of stephenrjohnson/puppet
+# Again, this won't be necessary when the module on the forge is updated
+PUPPET_MODULE_TARBALL_URL="https://github.com/stephenrjohnson/puppetlabs-puppet/tarball/master"
+PUPPET_MODULE_RPM="puppet.tar.gz"
+
+download "${PUPPET_MODULE_TARBALL_URL}" "${TEMP_DIR}/${PUPPET_MODULE_RPM}"
+tar zxf "${TEMP_DIR}/${PUPPET_MODULE_RPM}" --directory="${MODULE_DIR}/puppet" --strip-components=1
+
+# Finally, run puppet to set up the puppetmaster
+puppet apply --modulepath="${MODULE_DIR}" --execute "class{'::puppet::master': }"
