@@ -125,13 +125,5 @@ puppet module install stephenrjohnson/puppet --modulepath="${MODULE_DIR}"
 rm -rf "${MODULE_DIR}/inifile"
 puppet module install puppetlabs/inifile --modulepath="${MODULE_DIR}"
 
-# Grab the latest github version of stephenrjohnson/puppet
-# Again, this won't be necessary when the module on the forge is updated
-PUPPET_MODULE_TARBALL_URL="https://github.com/stephenrjohnson/puppetlabs-puppet/tarball/master"
-PUPPET_MODULE_RPM="puppet.tar.gz"
-
-download "${PUPPET_MODULE_TARBALL_URL}" "${TEMP_DIR}/${PUPPET_MODULE_RPM}"
-tar zxf "${TEMP_DIR}/${PUPPET_MODULE_RPM}" --directory="${MODULE_DIR}/puppet" --strip-components=1
-
 # Finally, run puppet to set up the puppetmaster
 puppet apply --modulepath="${MODULE_DIR}" --execute "class{'::puppet::master': }"
