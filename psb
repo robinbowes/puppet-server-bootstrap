@@ -25,22 +25,32 @@ EPEL_REPO_BASE=http://dl.fedoraproject.org/pub/epel
 TEMP_DIR=${TEMP:-/tmp}
 MODULE_DIR="${TEMP_DIR}/modules"
 
-# hash defining the release RPM release for each of the OS combinations we know about
+# hash defining the puppetlabs RPM release for each OS
 declare -A PUPPETLABS_RELEASE=(
-  ["fedora/f17"]="7"
-  ["fedora/f18"]="7"
-  ["fedora/f19"]="2"
-  ["el/5"]="7"
-  ["el/6"]="7"
+  ["fedora/f19"]="10"
+  ["fedora/f20"]="10"
+  ["el/5"]="10"
+  ["el/6"]="10"
+  ["el/7"]="10"
 )
+
+# hash defining the EPEL release for each OS
 declare -A EPEL_RELEASE=(
   ["el/5"]="4"
   ["el/6"]="8"
+  ["el/7"]="0.2"
+)
+
+# hash defining whether or not to use the beta EPEL repo
+declare -A EPEL_BETA=(
+  ["el/5"]=""
+  ["el/6"]=""
+  ["el/7"]="beta/"
 )
 
 function error() {
   echo "ERROR: $1"
-  exit $2
+  exit "$2"
 }
 
 function download(){
@@ -50,7 +60,7 @@ function download(){
 }
 
 function rpm_installed () {
-  rpm -q --quiet $1
+  rpm -q --quiet "$1"
 }
 
 # First, make sure we are on a RH-flavour OS and get the family name and major version
@@ -83,15 +93,15 @@ PUPPETLABS_RELEASE_RPM="${PUPPETLABS_RELEASE_NAME}.noarch.rpm"
 if rpm_installed "${PUPPETLABS_RELEASE_NAME}" ; then
   echo "${PUPPETLABS_RELEASE_NAME} installed"
 else
-  PUPPETLABS_REPO_URL="${PUPPETLABS_REPO_BASE}/${FAMILY_VERSION}/products/i386/${PUPPETLABS_RELEASE_RPM}"
+  PUPPETLABS_REPO_URL="${PUPPETLABS_REPO_BASE}/${FAMILY_VERSION}/products/x86_64/${PUPPETLABS_RELEASE_RPM}"
   download "${PUPPETLABS_REPO_URL}" "${TEMP_DIR}/$PUPPETLABS_RELEASE_RPM"
   yum localinstall "${TEMP_DIR}/$PUPPETLABS_RELEASE_RPM"
 fi
 
 # Now, let's do EPEL on non-Fedora platforms
 if [[ ${OS_FAMILY} != "Fedora" ]] ; then
-  EPEL_RPM_RELEASE="${EPEL_RELEASE["$FAMILY_VERSION"]}"
-  if [[ -z $PUPPETLABS_RPM_RELEASE ]] ; then
+  EPEL_RPM_RELEASE=${EPEL_RELEASE[$FAMILY_VERSION]}
+  if [[ -z $EPEL_RPM_RELEASE ]] ; then
     error "epel release rpm not known for $FAMILY_VERSION" 101
   fi
   EPEL_RELEASE_NAME="epel-release-${OS_MAJOR_VERSION}-${EPEL_RPM_RELEASE}"
@@ -99,7 +109,7 @@ if [[ ${OS_FAMILY} != "Fedora" ]] ; then
   if rpm_installed "${EPEL_RELEASE_NAME}" ; then
     echo "${EPEL_RELEASE_NAME} installed"
   else
-    EPEL_REPO_URL="${EPEL_REPO_BASE}/${OS_MAJOR_VERSION}/i386/${EPEL_RELEASE_RPM}"
+    EPEL_REPO_URL="${EPEL_REPO_BASE}/${EPEL_BETA[$FAMILY_VERSION]}${OS_MAJOR_VERSION}/x86_64/${EPEL_RELEASE_RPM}"
     download "${EPEL_REPO_URL}" "${TEMP_DIR}/$EPEL_RELEASE_RPM"
     yum -y localinstall "${TEMP_DIR}/$EPEL_RELEASE_RPM"
   fi
@@ -119,11 +129,7 @@ rm -rf "${MODULE_DIR}/puppet"
 
 # Now, checkout some modules to install the puppet master
 puppet module install stephenrjohnson/puppet --modulepath="${MODULE_DIR}"
-# At time of writing, puppetlabs/puppetdb uses a deprecated version of inifile.
-# Remove it, and install the correct one.
-# this will not be necessary when stephenrjohnson/puppet is updated
-rm -rf "${MODULE_DIR}/inifile"
-puppet module install puppetlabs/inifile --modulepath="${MODULE_DIR}"
 
 # Finally, run puppet to set up the puppetmaster
 puppet apply --modulepath="${MODULE_DIR}" --execute "class{'::puppet::master': }"
+
